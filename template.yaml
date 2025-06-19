@@ -1,7 +1,7 @@
 
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: AI Agent Marketplace Backend
+Description: AI Agent Marketplace Backend with Fargate
 
 Globals:
   Function:
@@ -10,10 +10,177 @@ Globals:
     Environment:
       Variables:
         AGENTS_TABLE: !Ref AgentsTable
+        EXECUTIONS_TABLE: !Ref ExecutionsTable
+        ECS_CLUSTER: !Ref ECSCluster
+        ECS_TASK_DEFINITION: !Ref AgentTaskDefinition
+        ECS_SUBNET_1: !Ref PrivateSubnet1
+        ECS_SUBNET_2: !Ref PrivateSubnet2
+        ECS_SECURITY_GROUP: !Ref ECSSecurityGroup
         CORS_ORIGIN: "*"
 
 Resources:
-  # DynamoDB Table for Agent Metadata
+  # VPC for Fargate
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  # Public Subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-1"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-2"
+
+  # Private Subnets
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.3.0/24
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-subnet-1"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.0.4.0/24
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-subnet-2"
+
+  # NAT Gateways
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  # Route Tables
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-routes"
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-routes-1"
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet2
+
+  # Security Groups
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # DynamoDB Tables
   AgentsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -34,6 +201,137 @@ Resources:
               KeyType: HASH
           Projection:
             ProjectionType: ALL
+
+  ExecutionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-executions"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: executionId
+          AttributeType: S
+        - AttributeName: agentId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: executionId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: AgentIdIndex
+          KeySchema:
+            - AttributeName: agentId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AWS::StackName}-cluster"
+      CapacityProviders:
+        - FARGATE
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+
+  # ECS Task Definition
+  AgentTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-agent-task"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: 256
+      Memory: 512
+      ExecutionRoleArn: !Ref ECSExecutionRole
+      TaskRoleArn: !Ref ECSTaskRole
+      ContainerDefinitions:
+        - Name: agent-container
+          Image: public.ecr.aws/docker/library/node:18-alpine
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: "8080"
+            - Name: NODE_ENV
+              Value: production
+          Command:
+            - sh
+            - -c
+            - |
+              echo "Starting AI Agent..."
+              echo "Agent ID: $AGENT_ID"
+              echo "Agent Name: $AGENT_NAME"
+              mkdir -p /app
+              cd /app
+              cat > server.js << 'EOF'
+              const http = require('http');
+              const server = http.createServer((req, res) => {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  status: 'running',
+                  agentId: process.env.AGENT_ID,
+                  agentName: process.env.AGENT_NAME,
+                  message: 'AI Agent is running successfully',
+                  timestamp: new Date().toISOString()
+                }));
+              });
+              server.listen(8080, () => {
+                console.log('Agent server running on port 8080');
+              });
+              EOF
+              node server.js
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: agent
+
+  # CloudWatch Log Group
+  ECSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}-agent-logs"
+      RetentionInDays: 7
+
+  # IAM Roles for ECS
+  ECSExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt AgentsTable.Arn
+                  - !GetAtt ExecutionsTable.Arn
 
   # API Gateway
   ApiGateway:
@@ -142,6 +440,59 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref AgentsTable
+        - DynamoDBWritePolicy:
+            TableName: !Ref ExecutionsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ecs:RunTask
+                - ecs:DescribeTasks
+                - ecs:StopTask
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource:
+                - !GetAtt ECSExecutionRole.Arn
+                - !GetAtt ECSTaskRole.Arn
+
+  GetExecutionsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers/agents.getExecutions
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /executions/{executionId}
+            Method: GET
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ExecutionsTable
+
+  StopExecutionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers/agents.stopExecution
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /executions/{executionId}/stop
+            Method: POST
+      Policies:
+        - DynamoDBWritePolicy:
+            TableName: !Ref ExecutionsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ecs:StopTask
+                - ecs:DescribeTasks
+              Resource: "*"
 
 Outputs:
   ApiGatewayUrl:
@@ -155,3 +506,15 @@ Outputs:
     Value: !Ref AgentsTable
     Export:
       Name: !Sub "${AWS::StackName}-agents-table"
+
+  ExecutionsTableName:
+    Description: "DynamoDB table name for executions"
+    Value: !Ref ExecutionsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-executions-table"
+
+  ECSClusterName:
+    Description: "ECS Cluster name"
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub "${AWS::StackName}-ecs-cluster"

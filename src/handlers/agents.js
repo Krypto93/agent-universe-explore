@@ -3,7 +3,14 @@ const AWS = require('aws-sdk');
 const { v4: uuidv4 } = require('uuid');
 
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
-const tableName = process.env.AGENTS_TABLE;
+const ecs = new AWS.ECS();
+const agentsTable = process.env.AGENTS_TABLE;
+const executionsTable = process.env.EXECUTIONS_TABLE;
+const ecsCluster = process.env.ECS_CLUSTER;
+const taskDefinition = process.env.ECS_TASK_DEFINITION;
+const subnet1 = process.env.ECS_SUBNET_1;
+const subnet2 = process.env.ECS_SUBNET_2;
+const securityGroup = process.env.ECS_SECURITY_GROUP;
 
 // CORS headers
 const headers = {
@@ -19,12 +26,12 @@ exports.getAgents = async (event) => {
     const { category } = event.queryStringParameters || {};
     
     let params = {
-      TableName: tableName
+      TableName: agentsTable
     };
 
     if (category && category !== 'All') {
       params = {
-        TableName: tableName,
+        TableName: agentsTable,
         IndexName: 'CategoryIndex',
         KeyConditionExpression: 'category = :category',
         ExpressionAttributeValues: {
@@ -61,7 +68,7 @@ exports.getAgentById = async (event) => {
     const { id } = event.pathParameters;
 
     const params = {
-      TableName: tableName,
+      TableName: agentsTable,
       Key: { id }
     };
 
@@ -103,7 +110,7 @@ exports.createAgent = async (event) => {
     };
 
     const params = {
-      TableName: tableName,
+      TableName: agentsTable,
       Item: agent
     };
 
@@ -148,7 +155,7 @@ exports.updateAgent = async (event) => {
     }, {});
 
     const params = {
-      TableName: tableName,
+      TableName: agentsTable,
       Key: { id },
       UpdateExpression: updateExpression,
       ExpressionAttributeNames: expressionAttributeNames,
@@ -179,7 +186,7 @@ exports.deleteAgent = async (event) => {
     const { id } = event.pathParameters;
 
     const params = {
-      TableName: tableName,
+      TableName: agentsTable,
       Key: { id }
     };
 
@@ -200,15 +207,17 @@ exports.deleteAgent = async (event) => {
   }
 };
 
-// Run agent (placeholder for container execution)
+// Run agent in Fargate container
 exports.runAgent = async (event) => {
   try {
     const { id } = event.pathParameters;
     const requestBody = event.body ? JSON.parse(event.body) : {};
 
+    console.log('Running agent:', id);
+
     // Get agent details first
     const getParams = {
-      TableName: tableName,
+      TableName: agentsTable,
       Key: { id }
     };
 
@@ -223,36 +232,293 @@ exports.runAgent = async (event) => {
     }
 
     const agent = agentResult.Item;
+    const executionId = uuidv4();
 
-    // Placeholder for container execution logic
-    // This is where you would integrate with AWS ECS, Fargate, or other container services
-    const executionResult = {
-      executionId: uuidv4(),
-      agentId: id,
-      agentName: agent.name,
-      status: 'running',
-      startTime: new Date().toISOString(),
-      input: requestBody.input || {},
-      message: `Agent ${agent.name} execution started successfully`
+    console.log('Starting Fargate task for agent:', agent.name);
+
+    // Create ECS task with environment variables
+    const taskParams = {
+      cluster: ecsCluster,
+      taskDefinition: taskDefinition,
+      launchType: 'FARGATE',
+      networkConfiguration: {
+        awsvpcConfiguration: {
+          subnets: [subnet1, subnet2],
+          securityGroups: [securityGroup],
+          assignPublicIp: 'ENABLED'
+        }
+      },
+      overrides: {
+        containerOverrides: [
+          {
+            name: 'agent-container',
+            environment: [
+              {
+                name: 'AGENT_ID',
+                value: id
+              },
+              {
+                name: 'AGENT_NAME',
+                value: agent.name
+              },
+              {
+                name: 'EXECUTION_ID',
+                value: executionId
+              },
+              {
+                name: 'INPUT_DATA',
+                value: JSON.stringify(requestBody.input || {})
+              }
+            ]
+          }
+        ]
+      }
     };
 
-    // In a real implementation, you would:
-    // 1. Start a container with the agent code
-    // 2. Pass the input parameters
-    // 3. Monitor execution status
-    // 4. Return real-time status updates
+    const taskResult = await ecs.runTask(taskParams).promise();
+
+    if (taskResult.failures && taskResult.failures.length > 0) {
+      console.error('ECS task failures:', taskResult.failures);
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({ 
+          error: 'Failed to start agent container',
+          details: taskResult.failures
+        })
+      };
+    }
+
+    const task = taskResult.tasks[0];
+    const taskArn = task.taskArn;
+
+    console.log('Task started with ARN:', taskArn);
+
+    // Store execution details in DynamoDB
+    const executionRecord = {
+      executionId: executionId,
+      agentId: id,
+      agentName: agent.name,
+      status: 'starting',
+      taskArn: taskArn,
+      startTime: new Date().toISOString(),
+      input: requestBody.input || {},
+      endpoint: null // Will be updated once container is running
+    };
+
+    const putParams = {
+      TableName: executionsTable,
+      Item: executionRecord
+    };
+
+    await dynamoDb.put(putParams).promise();
+
+    // Wait a moment and check task status
+    setTimeout(async () => {
+      try {
+        await updateExecutionStatus(executionId, taskArn);
+      } catch (error) {
+        console.error('Error updating execution status:', error);
+      }
+    }, 5000);
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify(executionResult)
+      body: JSON.stringify({
+        executionId: executionId,
+        agentId: id,
+        agentName: agent.name,
+        status: 'starting',
+        taskArn: taskArn,
+        startTime: executionRecord.startTime,
+        message: `Agent ${agent.name} is starting in container`
+      })
     };
   } catch (error) {
     console.error('Error running agent:', error);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Failed to run agent' })
+      body: JSON.stringify({ 
+        error: 'Failed to run agent',
+        details: error.message
+      })
     };
   }
 };
+
+// Get execution status
+exports.getExecutions = async (event) => {
+  try {
+    const { executionId } = event.pathParameters;
+
+    const params = {
+      TableName: executionsTable,
+      Key: { executionId }
+    };
+
+    const result = await dynamoDb.get(params).promise();
+
+    if (!result.Item) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({ error: 'Execution not found' })
+      };
+    }
+
+    // Update status from ECS if task is still running
+    if (result.Item.taskArn && (result.Item.status === 'starting' || result.Item.status === 'running')) {
+      await updateExecutionStatus(executionId, result.Item.taskArn);
+      
+      // Get updated record
+      const updatedResult = await dynamoDb.get(params).promise();
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify(updatedResult.Item)
+      };
+    }
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify(result.Item)
+    };
+  } catch (error) {
+    console.error('Error getting execution:', error);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: 'Failed to get execution' })
+    };
+  }
+};
+
+// Stop execution
+exports.stopExecution = async (event) => {
+  try {
+    const { executionId } = event.pathParameters;
+
+    // Get execution record
+    const getParams = {
+      TableName: executionsTable,
+      Key: { executionId }
+    };
+
+    const result = await dynamoDb.get(getParams).promise();
+
+    if (!result.Item) {
+      return {
+        statusCode: 404,
+        headers,
+        body: JSON.stringify({ error: 'Execution not found' })
+      };
+    }
+
+    const execution = result.Item;
+
+    // Stop ECS task if it's running
+    if (execution.taskArn && (execution.status === 'starting' || execution.status === 'running')) {
+      const stopParams = {
+        cluster: ecsCluster,
+        task: execution.taskArn,
+        reason: 'Stopped by user request'
+      };
+
+      await ecs.stopTask(stopParams).promise();
+    }
+
+    // Update execution status
+    const updateParams = {
+      TableName: executionsTable,
+      Key: { executionId },
+      UpdateExpression: 'SET #status = :status, endTime = :endTime',
+      ExpressionAttributeNames: {
+        '#status': 'status'
+      },
+      ExpressionAttributeValues: {
+        ':status': 'stopped',
+        ':endTime': new Date().toISOString()
+      },
+      ReturnValues: 'ALL_NEW'
+    };
+
+    const updateResult = await dynamoDb.update(updateParams).promise();
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify(updateResult.Attributes)
+    };
+  } catch (error) {
+    console.error('Error stopping execution:', error);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: 'Failed to stop execution' })
+    };
+  }
+};
+
+// Helper function to update execution status
+async function updateExecutionStatus(executionId, taskArn) {
+  try {
+    const describeParams = {
+      cluster: ecsCluster,
+      tasks: [taskArn]
+    };
+
+    const taskDescription = await ecs.describeTasks(describeParams).promise();
+    const task = taskDescription.tasks[0];
+
+    if (!task) {
+      return;
+    }
+
+    let status = 'unknown';
+    let endpoint = null;
+
+    switch (task.lastStatus) {
+      case 'PENDING':
+        status = 'starting';
+        break;
+      case 'RUNNING':
+        status = 'running';
+        // Extract endpoint from task (simplified - in real scenario you'd use ALB or service discovery)
+        if (task.attachments &&task.attachments.length > 0) {
+          const networkInterface = task.attachments[0].details.find(detail => detail.name === 'networkInterfaceId');
+          if (networkInterface) {
+            // In a real implementation, you would resolve the ENI to get the public IP
+            endpoint = `http://task-${taskArn.split('/').pop()}.example.com:8080`;
+          }
+        }
+        break;
+      case 'STOPPED':
+        status = task.stopCode === 'EssentialContainerExited' ? 'completed' : 'failed';
+        break;
+      default:
+        status = 'unknown';
+    }
+
+    const updateParams = {
+      TableName: executionsTable,
+      Key: { executionId },
+      UpdateExpression: 'SET #status = :status' + (endpoint ? ', endpoint = :endpoint' : '') + (status === 'completed' || status === 'failed' ? ', endTime = :endTime' : ''),
+      ExpressionAttributeNames: {
+        '#status': 'status'
+      },
+      ExpressionAttributeValues: {
+        ':status': status,
+        ...(endpoint && { ':endpoint': endpoint }),
+        ...((status === 'completed' || status === 'failed') && { ':endTime': new Date().toISOString() })
+      }
+    };
+
+    await dynamoDb.update(updateParams).promise();
+    console.log(`Updated execution ${executionId} status to ${status}`);
+  } catch (error) {
+    console.error('Error updating execution status:', error);
+  }
+}
