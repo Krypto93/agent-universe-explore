@@ -1,0 +1,23 @@
+
+{
+  "name": "ai-agent-marketplace-backend",
+  "version": "1.0.0",
+  "description": "Backend for AI Agent Marketplace",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1490.0",
+    "uuid": "^9.0.1"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "dynamodb",
+    "api-gateway",
+    "serverless"
+  ],
+  "author": "AI Agent Marketplace",
+  "license": "MIT"
+}
