@@ -1,4 +1,3 @@
-
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,9 +7,10 @@ import { Play, Star, Users } from 'lucide-react';
 
 interface AgentCardProps {
   agent: Agent;
+  onRun?: () => void; // 👈 optional handler for Run button
 }
 
-const AgentCard = ({ agent }: AgentCardProps) => {
+const AgentCard = ({ agent, onRun }: AgentCardProps) => {
   return (
     <Card className="agent-card-hover h-full flex flex-col">
       <CardHeader>
@@ -27,7 +27,7 @@ const AgentCard = ({ agent }: AgentCardProps) => {
           {agent.description}
         </CardDescription>
       </CardHeader>
-      
+
       <CardContent className="flex-1">
         <div className="flex items-center gap-4 text-sm text-gray-600 mb-4">
           <div className="flex items-center gap-1">
@@ -39,7 +39,7 @@ const AgentCard = ({ agent }: AgentCardProps) => {
             <span>{agent.users} users</span>
           </div>
         </div>
-        
+
         <div className="space-y-2">
           <div className="text-sm">
             <span className="font-medium">Price: </span>
@@ -51,14 +51,14 @@ const AgentCard = ({ agent }: AgentCardProps) => {
           </div>
         </div>
       </CardContent>
-      
+
       <CardFooter className="flex gap-2">
         <Button asChild variant="outline" className="flex-1">
           <Link to={`/agent/${agent.id}`}>
             View Details
           </Link>
         </Button>
-        <Button className="flex-1">
+        <Button onClick={onRun} className="flex-1">
           <Play className="h-4 w-4 mr-2" />
           Run Agent
         </Button>

@@ -1,20 +1,28 @@
-
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Bot } from 'lucide-react';
+import { signIn } from '@/utils/auth';
 
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // TODO: Implement AWS Cognito login
-    console.log('Login attempt:', { email, password });
+    try {
+      const token = await signIn(email, password);
+      localStorage.setItem('jwt', token as string);
+      alert('Login successful!');
+      window.location.href = '/'; // redirect to home or dashboard
+    } catch (err) {
+      console.error('Login failed:', err);
+      alert('Login failed. Check credentials or verify account.');
+    }
   };
 
   return (

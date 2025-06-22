@@ -1,11 +1,11 @@
-
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Bot } from 'lucide-react';
+import { signUp } from '@/utils/auth';
 
 const Signup = () => {
   const [formData, setFormData] = useState({
@@ -16,17 +16,29 @@ const Signup = () => {
     confirmPassword: ''
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    // TODO: Implement AWS Cognito signup
-    console.log('Signup attempt:', formData);
-  };
+  const navigate = useNavigate();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData(prev => ({
       ...prev,
       [e.target.name]: e.target.value
     }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { email, password, confirmPassword, firstName, lastName } = formData;
+
+    if (password !== confirmPassword) return alert("Passwords don't match");
+
+    try {
+      await signUp(email, password, firstName, lastName);
+      alert('Signup successful! Check your email for the verification code.');
+      navigate('/verify', { state: { email } }); // ✅ pass email to prefill verify page
+    } catch (err) {
+      console.error('Signup error:', err);
+      alert('Signup failed. Please try again.');
+    }
   };
 
   return (
