@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE = '/api'; // Use Vite proxy to avoid CORS in dev
+const API_BASE = import.meta.env.VITE_API_BASE;
+ // Use Vite proxy to avoid CORS in dev
 
 const getAuthHeader = () => {
   const token = localStorage.getItem('jwt');

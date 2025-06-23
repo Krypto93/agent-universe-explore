@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import rollupNodePolyFill from 'rollup-plugin-node-polyfills';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   resolve: {
     alias: {
@@ -25,12 +25,14 @@ export default defineConfig({
     },
   },
   server: {
-    proxy: {
-      '/api': {
-        target: 'https://xtbfbopxac.execute-api.ap-south-1.amazonaws.com/prod',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
-      },
-    },
+    proxy: mode === 'development'
+      ? {
+          '/api': {
+            target: 'https://xtbfbopxac.execute-api.ap-south-1.amazonaws.com/prod',
+            changeOrigin: true,
+            rewrite: path => path.replace(/^\/api/, ''),
+          },
+        }
+      : undefined,
   },
-});
+}));
