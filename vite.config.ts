@@ -33,6 +33,6 @@ export default defineConfig(({ mode }) => ({
             rewrite: path => path.replace(/^\/api/, ''),
           },
         }
-      : undefined,
+      : undefined, // ❗ disables proxy in production
   },
 }));
