@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Bot } from 'lucide-react';
-import { signUp } from '@/utils/auth';
+import { signUp, isSignUpEnabled } from '@/utils/auth';
 
 const Signup = () => {
   const [formData, setFormData] = useState({
@@ -27,6 +27,12 @@ const Signup = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!isSignUpEnabled) {
+      alert('For SignUp contact nouscloud@admin');
+      return;
+    }
+
     const { email, password, confirmPassword, firstName, lastName } = formData;
 
     if (password !== confirmPassword) return alert("Passwords don't match");
@@ -34,7 +40,7 @@ const Signup = () => {
     try {
       await signUp(email, password, firstName, lastName);
       alert('Signup successful! Check your email for the verification code.');
-      navigate('/verify', { state: { email } }); // ✅ pass email to prefill verify page
+      navigate('/verify', { state: { email } });
     } catch (err) {
       console.error('Signup error:', err);
       alert('Signup failed. Please try again.');
@@ -56,6 +62,11 @@ const Signup = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {!isSignUpEnabled && (
+            <div className="mb-4 p-3 bg-yellow-100 text-yellow-800 rounded text-center text-sm">
+              New signups are currently disabled. For access, please contact nouscloud@admin
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -67,6 +78,7 @@ const Signup = () => {
                   value={formData.firstName}
                   onChange={handleChange}
                   required
+                  disabled={!isSignUpEnabled}
                 />
               </div>
               <div className="space-y-2">
@@ -78,6 +90,7 @@ const Signup = () => {
                   value={formData.lastName}
                   onChange={handleChange}
                   required
+                  disabled={!isSignUpEnabled}
                 />
               </div>
             </div>
@@ -91,6 +104,7 @@ const Signup = () => {
                 value={formData.email}
                 onChange={handleChange}
                 required
+                disabled={!isSignUpEnabled}
               />
             </div>
             <div className="space-y-2">
@@ -103,6 +117,7 @@ const Signup = () => {
                 value={formData.password}
                 onChange={handleChange}
                 required
+                disabled={!isSignUpEnabled}
               />
             </div>
             <div className="space-y-2">
@@ -115,9 +130,14 @@ const Signup = () => {
                 value={formData.confirmPassword}
                 onChange={handleChange}
                 required
+                disabled={!isSignUpEnabled}
               />
             </div>
-            <Button type="submit" className="w-full">
+            <Button 
+              type="submit" 
+              className="w-full"
+              disabled={!isSignUpEnabled}
+            >
               Create Account
             </Button>
           </form>

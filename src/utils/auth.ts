@@ -5,6 +5,9 @@ import {
   CognitoUserAttribute
 } from 'amazon-cognito-identity-js';
 
+// Signup control flag - set to false to disable signups
+export const isSignUpEnabled = false;
+
 const poolData = {
   UserPoolId: 'ap-south-1_sqEUfZgsE',     // e.g., us-east-1_xxxxx
   ClientId: '4vafb9khr72r3uuferi6ts166'           // e.g., xxxxxxxx
